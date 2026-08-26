@@ -459,7 +459,9 @@
               <tr>
                 <th>时间</th>
                 <th>模型</th>
-                <th>Tokens (入/出/缓存)</th>
+                <th title="读取：实际输入 token（已扣除缓存命中）
+写入：输出 token
+缓存：缓存命中的输入 token（原始输入 = 读取 + 缓存）">Token</th>
                 <th>命中率</th>
                 <th>耗时 (首/总)</th>
                 <th>思考等级</th>
