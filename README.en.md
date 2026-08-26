@@ -4,24 +4,24 @@ English | [简体中文](README.md)
 
 CLIProxyAPI Usage Dashboard is a standalone browser page for viewing CLIProxyAPI usage statistics from the management API.
 
-The page is a single static HTML app. It reads usage records from CLIProxyAPI, stores them in browser-side SQLite through `sql.js` and IndexedDB, then shows aggregate and detail views by account/auth source, model, token usage, cache hit rate, and request records.
+CLIProxyAPI Usage Dashboard is a standalone browser page for viewing usage statistics collected by the `codex-token-usage` plugin.
+
+The page is a single static HTML app. It reads the plugin's server-side SQLite-persisted usage statistics through the CLIProxyAPI management API, shows summaries by key, auth account, and model (including cost, cache hit rate, and average latency), and accumulates request details in the page.
 
 ## Features
 
-- Reads `GET /v0/management/usage-queue?count=N`
-- Also reads `/api-key-usage` when available
-- Groups usage by account/auth source and model
-- Shows call count, input tokens, output tokens, cached tokens, total tokens, and cache hit rate
-- Keeps a local SQLite database in the browser
-- Supports manual sync and auto sync
-- Supports SQLite import/export for backup or migration
+- Reads `GET /v0/management/plugins/codex-token-usage/summary?window=<all|today|24h|7d|30d>&limit=2000`; the toolbar switches the time range (all / today / last 24h / last 7d / last 30d)
+- Per-key server-side stats: requests, input/output tokens, cache hit rate, cost, average latency, last seen
+- Per-account and per-model server-side aggregates
+- Recent request list (with reasoning effort), filterable by account/model and searchable
+- Key aliases can be configured in the `KEY_ALIASES` table at the top of the script (matched by the last 4 chars of each key); panels display "alias (masked key)" with the note in the hover tooltip
+- Reading never deletes server-side data; details accumulate within the browser tab
 - Runs as a static page without a backend service
 
 ## Requirements
 
 - CLIProxyAPI with management API enabled
-- Usage statistics enabled in CLIProxyAPI
-- A browser that supports IndexedDB
+- The `codex-token-usage` plugin installed and enabled on the server
 - Network access from the browser to your CLIProxyAPI management endpoint
 
 The default management endpoint expected by the page:
@@ -36,16 +36,16 @@ http://127.0.0.1:8317/v0/management
 2. Open `usage.html` in your browser.
 3. Enter your CLIProxyAPI management API address.
 4. Enter your Management key.
-5. Click sync to read records from CLIProxyAPI.
+5. Click refresh to load server-side data from the plugin.
 
 You can also open the app directly through `static/usage.html`.
 
 ## Important Notes
 
 - The Management key is not included in this repository. Enter your own key in the browser when using the page.
-- Usage queue records are consumed by the management endpoint after they are read, so sync or export before clearing browser data.
-- Browser data is local to the browser/profile where you opened the page.
-- Use the SQLite export button if you want a durable backup.
+- Summaries are read from the plugin's server-side database; reading never deletes data, so you can refresh at any time.
+- The recent-requests endpoint only returns the latest records each time; the page accumulates them within the current tab. Closing the tab loses the details, but summaries are unaffected.
+- The `KEY_ALIASES` table is published with the repository — do not put sensitive mappings in it.
 - If your browser blocks `file://` requests, serve this folder with any static web server and open the local URL instead.
 
 

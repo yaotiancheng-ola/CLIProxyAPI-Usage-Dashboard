@@ -94,7 +94,7 @@
       padding: 16px;
       display: grid;
       gap: 12px;
-      grid-template-columns: minmax(260px, 1.4fr) minmax(260px, 1fr) minmax(130px, 0.3fr) auto auto;
+      grid-template-columns: minmax(260px, 1.4fr) minmax(260px, 1fr) minmax(150px, 0.4fr) auto auto;
       align-items: end;
     }
 
@@ -191,6 +191,10 @@
       grid-template-columns: minmax(380px, 0.8fr) minmax(620px, 1.6fr);
       gap: 16px;
       align-items: start;
+    }
+
+    .span-full {
+      grid-column: 1 / -1;
     }
 
     .panel-header {
@@ -321,13 +325,19 @@
         <input id="managementKey" type="password" autocomplete="current-password" value="" placeholder="输入管理密钥" />
       </div>
       <div>
-        <label for="queueCount">明细读取条数</label>
-        <input id="queueCount" type="number" min="1" max="5000" step="1" value="1000" />
+        <label for="windowFilter">时间范围</label>
+        <select id="windowFilter">
+          <option value="all">全部</option>
+          <option value="today">今天</option>
+          <option value="24h">最近 24 小时</option>
+          <option value="7d">最近 7 天</option>
+          <option value="30d">最近 30 天</option>
+        </select>
       </div>
       <button id="refreshBtn" class="btn primary">刷新统计</button>
       <button id="clearBtn" class="btn">清空页面</button>
     </section>
-    <div id="status" class="status">页面只保存在当前浏览器标签页内；/usage-queue 被读取后，服务端队列中的对应记录会被移除。</div>
+    <div id="status" class="status">统计汇总来自 codex-token-usage 插件的服务端数据库（读取不会删除数据）；请求明细由页面在当前标签页内累积。</div>
 
     <section class="stats" aria-label="总览">
       <div class="stat">
@@ -349,9 +359,33 @@
     </section>
 
     <section class="grid">
+      <div class="panel span-full" id="pluginPanel" hidden>
+        <div class="panel-header">
+          <h2>按 Key 统计 · 服务端（codex-token-usage 插件）</h2>
+          <span id="pluginHint" class="hint">0 keys</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>请求</th>
+                <th>输入</th>
+                <th>输出</th>
+                <th>缓存命中</th>
+                <th>成本 (USD)</th>
+                <th>平均延迟</th>
+                <th>最近活跃</th>
+              </tr>
+            </thead>
+            <tbody id="pluginKeyRows"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header">
-          <h2>按认证账号统计</h2>
+          <h2>按认证账号统计 · 服务端</h2>
           <span id="accountHint" class="hint">0 rows</span>
         </div>
         <div class="table-wrap">
@@ -386,7 +420,7 @@
           </div>
           <div>
             <label for="searchFilter">搜索</label>
-            <input id="searchFilter" placeholder="provider / endpoint / request id" />
+            <input id="searchFilter" placeholder="provider / 账号 / 模型" />
           </div>
         </div>
         <div class="table-wrap">
@@ -396,12 +430,12 @@
                 <th>时间</th>
                 <th>账号</th>
                 <th>模型</th>
-                <th>输入</th>
-                <th>输出</th>
+                <th>Tokens (入/出)</th>
                 <th>缓存</th>
                 <th>命中率</th>
+                <th>耗时 (首/总)</th>
                 <th>Provider</th>
-                <th>Endpoint</th>
+                <th>思考等级</th>
                 <th>状态</th>
               </tr>
             </thead>
@@ -413,17 +447,33 @@
   </main>
 
   <script>
+    const NO_KEY = '(未记录)';
+
+    // key 别名表：键为 key 的末 4 位（对应插件统计里 sk-****xxxx 的后缀），按需修改。
+    const KEY_ALIASES = {
+      'e7e0': { name: 'Tiancheng', note: 'id=2' },
+      'e32d': { name: 'SAO NING', note: 'id=8' },
+      '129e': { name: 'daxiong', note: 'id=5' },
+      '69ce': { name: 'sanhu', note: 'id=11' },
+      'b963': { name: 'GF_OpenAI', note: 'id=3' },
+      '9f89': { name: 'zhangGPT', note: 'id=6' }
+    };
+
     const state = {
       records: [],
       accounts: [],
       models: [],
+      pluginKeys: [],
+      pluginAccounts: [],
+      pluginModels: [],
+      server: null,
       raw: null
     };
 
     const els = {
       baseUrl: document.getElementById('baseUrl'),
       managementKey: document.getElementById('managementKey'),
-      queueCount: document.getElementById('queueCount'),
+      windowFilter: document.getElementById('windowFilter'),
       refreshBtn: document.getElementById('refreshBtn'),
       clearBtn: document.getElementById('clearBtn'),
       status: document.getElementById('status'),
@@ -437,7 +487,10 @@
       detailHint: document.getElementById('detailHint'),
       accountFilter: document.getElementById('accountFilter'),
       modelFilter: document.getElementById('modelFilter'),
-      searchFilter: document.getElementById('searchFilter')
+      searchFilter: document.getElementById('searchFilter'),
+      pluginPanel: document.getElementById('pluginPanel'),
+      pluginHint: document.getElementById('pluginHint'),
+      pluginKeyRows: document.getElementById('pluginKeyRows')
     };
 
     function defaultBaseUrl() {
@@ -453,9 +506,28 @@
       return Number(value || 0).toLocaleString('en-US');
     }
 
+    function fmtTokens(value) {
+      const n = Number(value || 0);
+      if (n >= 1e9) return `${compact(n / 1e9)}B`;
+      if (n >= 1e6) return `${compact(n / 1e6)}M`;
+      return fmt(n);
+    }
+
+    function compact(scaled) {
+      const rounded = scaled >= 1000 ? Math.round(scaled) : Number(scaled.toFixed(scaled < 10 ? 2 : 1));
+      return String(rounded);
+    }
+
     function pct(part, total) {
       if (!total) return '0%';
       return `${((part / total) * 100).toFixed(1)}%`;
+    }
+
+    function fmtDuration(ms) {
+      const n = Number(ms || 0);
+      if (!n) return '-';
+      if (n < 1000) return `${Math.round(n)}ms`;
+      return `${(n / 1000).toFixed(1)}s`;
     }
 
     function text(value) {
@@ -520,16 +592,23 @@
       return fallback || 'unknown';
     }
 
-    function normalizeRecord(record, context = {}) {
+    function normalizeTimestamp(value) {
+      if (!value) return '';
+      const ms = Date.parse(value);
+      return Number.isNaN(ms) ? String(value) : new Date(ms).toISOString();
+    }
+
+    function normalizeRecord(record) {
       const tokens = tokenBag(record);
       return {
-        timestamp: record.timestamp ?? record.time ?? record.created_at ?? record.RequestedAt ?? context.timestamp ?? '',
-        account: accountName(record, context.account),
-        model: record.model ?? record.Model ?? record.alias ?? context.model ?? 'unknown',
-        provider: record.provider ?? record.Provider ?? record.source_type ?? context.provider ?? '',
-        endpoint: record.endpoint ?? context.endpoint ?? '',
-        requestId: record.request_id ?? record.requestId ?? '',
-        failed: Boolean(record.failed ?? record.Failed ?? context.failed ?? false),
+        timestamp: normalizeTimestamp(record.timestamp ?? record.time ?? record.created_at ?? record.RequestedAt ?? ''),
+        account: accountName(record),
+        model: record.model ?? record.Model ?? record.alias ?? 'unknown',
+        provider: record.provider ?? record.Provider ?? record.source_type ?? '',
+        reasoningEffort: record.reasoning_effort ?? record.reasoningEffort ?? record.ReasoningEffort ?? '',
+        ttftMs: Number(record.ttft_ms ?? record.ttftMs ?? 0) || 0,
+        latencyMs: Number(record.latency_ms ?? record.latencyMs ?? 0) || 0,
+        failed: Boolean(record.failed ?? record.Failed ?? false),
         input: tokens.input,
         output: tokens.output,
         cached: tokens.cached,
@@ -538,111 +617,15 @@
       };
     }
 
-    function collectDetailsFromUsage(usage) {
-      const records = [];
-      const root = usage && usage.usage ? usage.usage : usage;
-      const apis = root && root.apis && typeof root.apis === 'object' ? root.apis : {};
-      for (const [endpoint, apiValue] of Object.entries(apis)) {
-        const models = apiValue && apiValue.models && typeof apiValue.models === 'object' ? apiValue.models : {};
-        for (const [model, modelValue] of Object.entries(models)) {
-          const details = Array.isArray(modelValue.details) ? modelValue.details : [];
-          for (const detail of details) {
-            records.push(normalizeRecord(detail, { endpoint, model }));
-          }
-        }
-      }
-      return records;
-    }
-
-    function collectFromUsageQueue(queue) {
-      const source = queue && typeof queue === 'object' && !Array.isArray(queue)
-        ? (queue.records ?? queue.items ?? queue.data ?? queue['usage-queue'] ?? queue.queue)
-        : queue;
-      if (!Array.isArray(source)) return [];
-      return source
-        .filter(item => item && typeof item === 'object')
-        .map(item => normalizeRecord(item));
-    }
-
-    function splitApiKeyBucket(key) {
-      const [baseUrl, apiKey] = String(key || '').split('|');
-      return {
-        baseUrl: baseUrl || '',
-        apiKey: apiKey || key || ''
-      };
-    }
-
-    function collectFromApiKeyUsage(value) {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-      const records = [];
-      Object.entries(value).forEach(([provider, buckets]) => {
-        if (!buckets || typeof buckets !== 'object' || Array.isArray(buckets)) return;
-        Object.entries(buckets).forEach(([bucketKey, bucket]) => {
-          if (!bucket || typeof bucket !== 'object') return;
-          const { baseUrl, apiKey } = splitApiKeyBucket(bucketKey);
-          const account = apiKey ? `${provider}:${apiKey}` : `${provider}:${bucketKey}`;
-          const recent = Array.isArray(bucket.recent_requests) ? bucket.recent_requests : [];
-          if (recent.length) {
-            recent.forEach(row => {
-              records.push(normalizeRecord(row, {
-                provider,
-                account,
-                endpoint: baseUrl,
-                model: row.model ?? row.Model ?? 'bucket',
-                failed: Number(row.failed || 0) > Number(row.success || 0)
-              }));
-            });
-          } else {
-            records.push(normalizeRecord(bucket, {
-              provider,
-              account,
-              endpoint: baseUrl,
-              model: bucket.model ?? bucket.Model ?? 'bucket',
-              failed: Number(bucket.failed || 0) > Number(bucket.success || 0)
-            }));
-          }
-        });
-      });
-      return records;
-    }
-
-    function collectAnyDetails(value, records = [], path = []) {
-      if (!value || typeof value !== 'object') return records;
-      if (Array.isArray(value)) {
-        const looksLikeRecords = value.some(item => item && typeof item === 'object' && (item.tokens || item.input_tokens || item.output_tokens || item.model || item.endpoint));
-        if (looksLikeRecords) {
-          value.forEach(item => {
-            if (item && typeof item === 'object') records.push(normalizeRecord(item));
-          });
-          return records;
-        }
-        value.forEach((item, index) => collectAnyDetails(item, records, path.concat(index)));
-        return records;
-      }
-      if (Array.isArray(value.details)) {
-        value.details.forEach(item => records.push(normalizeRecord(item)));
-      }
-      if (Array.isArray(value.recent_requests)) {
-        value.recent_requests.forEach(item => {
-          const key = path[path.length - 1] || '';
-          records.push(normalizeRecord(item, { account: String(key) }));
-        });
-      }
-      Object.entries(value).forEach(([key, item]) => {
-        if (key !== 'details' && key !== 'recent_requests') collectAnyDetails(item, records, path.concat(key));
-      });
-      return records;
-    }
-
     function dedupeRecords(records) {
       const seen = new Set();
       return records.filter(record => {
+        // 不含 request_id/endpoint/api_key：同一条请求在不同接口（usage-queue 与插件）
+        // 里的这些字段可用性不同，只按时间戳+账号+模型+token 数判断同一性。
         const key = [
-          record.requestId,
           record.timestamp,
           record.account,
           record.model,
-          record.endpoint,
           record.input,
           record.output,
           record.cached
@@ -653,22 +636,7 @@
       });
     }
 
-    function summarize(records) {
-      const map = new Map();
-      for (const record of records) {
-        if (!map.has(record.account)) {
-          map.set(record.account, { account: record.account, requests: 0, input: 0, output: 0, cached: 0 });
-        }
-        const row = map.get(record.account);
-        row.requests += 1;
-        row.input += record.input;
-        row.output += record.output;
-        row.cached += record.cached;
-      }
-      return Array.from(map.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output));
-    }
-
-    function optionList(select, label, values) {
+    function optionList(select, label, values, format) {
       const current = select.value;
       select.innerHTML = '';
       const all = document.createElement('option');
@@ -678,24 +646,41 @@
       values.forEach(value => {
         const option = document.createElement('option');
         option.value = value;
-        option.textContent = value;
+        option.textContent = format ? format(value) : value;
         select.appendChild(option);
       });
       if (values.includes(current)) select.value = current;
     }
 
-    function renderAccounts(rows) {
+    function maskKey(value) {
+      const key = String(value || NO_KEY);
+      if (key === NO_KEY || key.length <= 12) return key;
+      return `${key.slice(0, 6)}…${key.slice(-4)}`;
+    }
+
+    function keyAlias(value) {
+      const key = String(value || '');
+      if (!key || key === NO_KEY) return null;
+      return KEY_ALIASES[key.slice(-4)] || null;
+    }
+
+    function keyDisplay(value) {
+      const alias = keyAlias(value);
+      return alias ? `${alias.name} (${maskKey(value)})` : maskKey(value);
+    }
+
+    function renderSummary(rows) {
       els.accountHint.textContent = `${rows.length} rows`;
       if (!rows.length) {
-        els.accountRows.innerHTML = '<tr><td class="empty" colspan="5">暂无账号统计</td></tr>';
+        els.accountRows.innerHTML = '<tr><td class="empty" colspan="5">暂无统计数据，刷新后从插件读取。</td></tr>';
         return;
       }
       els.accountRows.innerHTML = rows.map(row => `
         <tr>
-          <td class="account mono" title="${escapeHtml(row.account)}">${escapeHtml(row.account)}</td>
+          <td class="account mono" title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</td>
           <td>${fmt(row.requests)}</td>
-          <td>${fmt(row.input)}</td>
-          <td>${fmt(row.output)}</td>
+          <td title="${fmt(row.input)}">${fmtTokens(row.input)}</td>
+          <td title="${fmt(row.output)}">${fmtTokens(row.output)}</td>
           <td>${pct(row.cached, row.input)}</td>
         </tr>
       `).join('');
@@ -709,7 +694,7 @@
         if (account && record.account !== account) return false;
         if (model && record.model !== model) return false;
         if (!search) return true;
-        const haystack = [record.provider, record.endpoint, record.requestId, record.account, record.model].join(' ').toLowerCase();
+        const haystack = [record.provider, record.account, record.model].join(' ').toLowerCase();
         return haystack.includes(search);
       });
     }
@@ -718,7 +703,7 @@
       const rows = filteredRecords();
       els.detailHint.textContent = `${rows.length} rows`;
       if (!rows.length) {
-        els.detailRows.innerHTML = '<tr><td class="empty" colspan="10">暂无明细，确认已启用 usage-statistics-enabled 并且服务内存中有请求记录。</td></tr>';
+        els.detailRows.innerHTML = '<tr><td class="empty" colspan="10">暂无明细，确认服务端已安装 codex-token-usage 插件并已产生请求。</td></tr>';
         return;
       }
       els.detailRows.innerHTML = rows.slice(0, 1000).map(row => `
@@ -726,12 +711,12 @@
           <td class="mono">${escapeHtml(formatTime(row.timestamp))}</td>
           <td class="account mono" title="${escapeHtml(row.account)}">${escapeHtml(row.account)}</td>
           <td><span class="pill" title="${escapeHtml(row.model)}">${escapeHtml(row.model)}</span></td>
-          <td>${fmt(row.input)}</td>
-          <td>${fmt(row.output)}</td>
+          <td class="mono" title="输入 ${fmt(row.input)} / 输出 ${fmt(row.output)}">${fmt(row.input)} / ${fmt(row.output)}</td>
           <td>${fmt(row.cached)}</td>
           <td>${pct(row.cached, row.input)}</td>
+          <td class="mono" title="首 token ${fmt(row.ttftMs)}ms / 总耗时 ${fmt(row.latencyMs)}ms">${escapeHtml(fmtDuration(row.ttftMs))} / ${escapeHtml(fmtDuration(row.latencyMs))}</td>
           <td class="mono">${escapeHtml(text(row.provider))}</td>
-          <td class="mono">${escapeHtml(text(row.endpoint))}</td>
+          <td class="mono">${escapeHtml(text(row.reasoningEffort))}</td>
           <td>${row.failed ? '<span style="color:var(--danger)">failed</span>' : '<span style="color:var(--success)">ok</span>'}</td>
         </tr>
       `).join('');
@@ -747,27 +732,45 @@
       }[char]));
     }
 
+    function renderPluginKeys() {
+      const rows = state.pluginKeys || [];
+      els.pluginPanel.hidden = rows.length === 0;
+      if (!rows.length) return;
+      els.pluginHint.textContent = `${rows.length} keys`;
+      els.pluginKeyRows.innerHTML = rows.map(row => {
+        const alias = keyAlias(row.key_id);
+        const tip = [row.key_id, alias && alias.note].filter(Boolean).join(' · ');
+        return `
+        <tr>
+          <td class="account mono" title="${escapeHtml(tip)}">${escapeHtml(keyDisplay(row.key_id))}</td>
+          <td>${fmt(row.requests)}</td>
+          <td title="${fmt(row.input_tokens)}">${fmtTokens(row.input_tokens)}</td>
+          <td title="${fmt(row.output_tokens)}">${fmtTokens(row.output_tokens)}</td>
+          <td>${pct(row.cached_tokens, row.input_tokens)}</td>
+          <td>${row.cost_available ? `$${Number(row.cost_usd || 0).toFixed(2)}` : '-'}</td>
+          <td>${(Number(row.avg_latency_ms || 0) / 1000).toFixed(1)}s</td>
+          <td class="mono">${escapeHtml(formatTime(row.last_seen))}</td>
+        </tr>`;
+      }).join('');
+    }
+
     function renderAll() {
-      const rows = summarize(state.records);
-      const total = rows.reduce((acc, row) => {
-        acc.input += row.input;
-        acc.output += row.output;
-        acc.cached += row.cached;
-        return acc;
-      }, { input: 0, output: 0, cached: 0 });
+      const server = state.server || { accounts: 0, input: 0, output: 0, cached: 0 };
+      els.statAccounts.textContent = fmt(server.accounts);
+      els.statInput.textContent = fmtTokens(server.input);
+      els.statOutput.textContent = fmtTokens(server.output);
+      els.statInput.title = fmt(server.input);
+      els.statOutput.title = fmt(server.output);
+      els.statCache.textContent = pct(server.cached, server.input);
 
-      state.accounts = rows.map(row => row.account);
-      state.models = Array.from(new Set(state.records.map(record => record.model).filter(Boolean))).sort();
-
-      els.statAccounts.textContent = fmt(rows.length);
-      els.statInput.textContent = fmt(total.input);
-      els.statOutput.textContent = fmt(total.output);
-      els.statCache.textContent = pct(total.cached, total.input);
+      state.accounts = state.pluginAccounts.map(row => row.name);
+      state.models = Array.from(new Set(state.pluginModels.filter(Boolean))).sort();
 
       optionList(els.accountFilter, '全部账号', state.accounts);
       optionList(els.modelFilter, '全部模型', state.models);
-      renderAccounts(rows);
+      renderSummary(state.pluginAccounts);
       renderDetails();
+      renderPluginKeys();
     }
 
     async function refresh() {
@@ -777,39 +780,48 @@
         return;
       }
       els.refreshBtn.disabled = true;
-      const count = Math.max(1, Math.min(5000, Number(els.queueCount.value) || 1000));
-      setStatus(`正在读取 /usage-queue?count=${count} 和 /api-key-usage ...`);
+      const windowValue = els.windowFilter.value || 'all';
+      setStatus(`正在读取 /plugins/codex-token-usage/summary?window=${windowValue} ...`);
       try {
         localStorage.setItem('cliproxyapi-usage-base-url', normalizeBaseUrl(els.baseUrl.value));
-        const results = await Promise.allSettled([
-          apiGet(`/usage-queue?count=${count}`),
-          apiGet('/api-key-usage')
-        ]);
+        const payload = await apiGet(`/plugins/codex-token-usage/summary?window=${encodeURIComponent(windowValue)}&limit=2000`);
+        if (!payload || !Array.isArray(payload.key_summaries)) {
+          throw new Error('返回的数据不是 codex-token-usage 插件的 summary（缺少 key_summaries），请确认服务端已安装并启用该插件');
+        }
 
-        const ok = results.filter(result => result.status === 'fulfilled').map(result => result.value);
-        if (!ok.length) throw results[0].reason;
+        state.raw = payload;
+        state.pluginKeys = payload.key_summaries
+          .slice()
+          .sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
+        state.pluginAccounts = (Array.isArray(payload.accounts) ? payload.accounts : []).map(row => ({
+          name: row.email || row.source || row.auth_file || 'unknown',
+          requests: row.requests || 0,
+          input: row.input_tokens || 0,
+          output: row.output_tokens || 0,
+          cached: row.cached_tokens || 0
+        })).sort((a, b) => (b.input + b.output) - (a.input + a.output));
+        state.pluginModels = (Array.isArray(payload.models) ? payload.models : []).map(row => row.model);
 
-        let records = [];
-        ok.forEach(payload => {
-          records = records.concat(collectFromUsageQueue(payload));
-          records = records.concat(collectDetailsFromUsage(payload));
-          records = records.concat(collectAnyDetails(payload));
-        });
+        const totals = payload.totals && typeof payload.totals === 'object' ? payload.totals : {};
+        state.server = {
+          accounts: state.pluginAccounts.length,
+          requests: totals.requests || 0,
+          input: totals.input_tokens || 0,
+          output: totals.output_tokens || 0,
+          cached: totals.cached_tokens || 0
+        };
 
-        state.raw = ok;
-        const newRecords = dedupeRecords(records);
-        state.records = dedupeRecords(state.records.concat(newRecords))
+        const recent = Array.isArray(payload.recent) ? payload.recent : [];
+        const before = state.records.length;
+        state.records = dedupeRecords(state.records.concat(recent.map(row => normalizeRecord(row))))
           .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+        const added = state.records.length - before;
         renderAll();
 
-        const failures = results
-          .filter(result => result.status === 'rejected')
-          .map(result => result.reason.message);
         setStatus(
-          failures.length
-            ? `本次新增 ${newRecords.length} 条，当前页面保留 ${state.records.length} 条；部分接口不可用：${failures.join('；')}`
-            : `本次新增 ${newRecords.length} 条，当前页面保留 ${state.records.length} 条。服务端 usage 队列已弹出这些新增记录。`,
-          failures.length ? '' : 'ok'
+          `已读取服务端统计：${state.pluginKeys.length} 个 key、${state.pluginAccounts.length} 个账号、共 ${fmt(state.server.requests)} 次请求；` +
+          `本次新增明细 ${added} 条，页面保留 ${state.records.length} 条。读取不会删除服务端数据。`,
+          'ok'
         );
       } catch (err) {
         setStatus(`读取失败：${err.message || err}`, 'error');
@@ -821,13 +833,24 @@
     function clearPage() {
       state.records = [];
       state.raw = null;
+      state.pluginKeys = [];
+      state.pluginAccounts = [];
+      state.pluginModels = [];
+      state.server = null;
       renderAll();
-      setStatus('页面已清空。注意：已经从服务端 usage 队列弹出的记录不会自动回到队列。');
+      setStatus('页面已清空。点击“刷新统计”可重新读取插件的服务端数据。');
     }
 
     els.baseUrl.value = localStorage.getItem('cliproxyapi-usage-base-url') || defaultBaseUrl();
+    els.windowFilter.value = localStorage.getItem('cliproxyapi-usage-window') || 'all';
     els.refreshBtn.addEventListener('click', refresh);
     els.clearBtn.addEventListener('click', clearPage);
+    els.windowFilter.addEventListener('change', () => {
+      localStorage.setItem('cliproxyapi-usage-window', els.windowFilter.value);
+      // 明细按时间窗口累积，切换窗口后旧明细不再适用，清空并重新读取。
+      state.records = [];
+      refresh();
+    });
     els.accountFilter.addEventListener('change', renderDetails);
     els.modelFilter.addEventListener('change', renderDetails);
     els.searchFilter.addEventListener('input', renderDetails);
