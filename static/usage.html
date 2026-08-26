@@ -188,9 +188,13 @@
 
     .grid {
       display: grid;
-      grid-template-columns: minmax(380px, 0.8fr) minmax(620px, 1.6fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 16px;
       align-items: start;
+    }
+
+    .grid > .panel {
+      grid-column: 1 / -1;
     }
 
     .span-full {
@@ -383,7 +387,7 @@
         </div>
       </div>
 
-      <div class="panel">
+      <div class="panel span-full" id="accountPanel" hidden>
         <div class="panel-header">
           <h2>按认证账号统计 · 服务端</h2>
           <span id="accountHint" class="hint">0 rows</span>
@@ -411,16 +415,12 @@
         </div>
         <div class="filters">
           <div>
-            <label for="accountFilter">账号</label>
-            <select id="accountFilter"><option value="">全部账号</option></select>
-          </div>
-          <div>
             <label for="modelFilter">模型</label>
             <select id="modelFilter"><option value="">全部模型</option></select>
           </div>
           <div>
             <label for="searchFilter">搜索</label>
-            <input id="searchFilter" placeholder="provider / 账号 / 模型" />
+            <input id="searchFilter" placeholder="账号 / 模型" />
           </div>
         </div>
         <div class="table-wrap">
@@ -428,13 +428,11 @@
             <thead>
               <tr>
                 <th>时间</th>
-                <th>账号</th>
                 <th>模型</th>
                 <th>Tokens (入/出)</th>
                 <th>缓存</th>
                 <th>命中率</th>
                 <th>耗时 (首/总)</th>
-                <th>Provider</th>
                 <th>思考等级</th>
                 <th>状态</th>
               </tr>
@@ -485,7 +483,7 @@
       detailRows: document.getElementById('detailRows'),
       accountHint: document.getElementById('accountHint'),
       detailHint: document.getElementById('detailHint'),
-      accountFilter: document.getElementById('accountFilter'),
+      accountPanel: document.getElementById('accountPanel'),
       modelFilter: document.getElementById('modelFilter'),
       searchFilter: document.getElementById('searchFilter'),
       pluginPanel: document.getElementById('pluginPanel'),
@@ -687,11 +685,9 @@
     }
 
     function filteredRecords() {
-      const account = els.accountFilter.value;
       const model = els.modelFilter.value;
       const search = els.searchFilter.value.trim().toLowerCase();
       return state.records.filter(record => {
-        if (account && record.account !== account) return false;
         if (model && record.model !== model) return false;
         if (!search) return true;
         const haystack = [record.provider, record.account, record.model].join(' ').toLowerCase();
@@ -703,19 +699,17 @@
       const rows = filteredRecords();
       els.detailHint.textContent = `${rows.length} rows`;
       if (!rows.length) {
-        els.detailRows.innerHTML = '<tr><td class="empty" colspan="10">暂无明细，确认服务端已安装 codex-token-usage 插件并已产生请求。</td></tr>';
+        els.detailRows.innerHTML = '<tr><td class="empty" colspan="8">暂无明细，确认服务端已安装 codex-token-usage 插件并已产生请求。</td></tr>';
         return;
       }
       els.detailRows.innerHTML = rows.slice(0, 1000).map(row => `
         <tr>
           <td class="mono">${escapeHtml(formatTime(row.timestamp))}</td>
-          <td class="account mono" title="${escapeHtml(row.account)}">${escapeHtml(row.account)}</td>
           <td><span class="pill" title="${escapeHtml(row.model)}">${escapeHtml(row.model)}</span></td>
           <td class="mono" title="输入 ${fmt(row.input)} / 输出 ${fmt(row.output)}">${fmt(row.input)} / ${fmt(row.output)}</td>
           <td>${fmt(row.cached)}</td>
           <td>${pct(row.cached, row.input)}</td>
           <td class="mono" title="首 token ${fmt(row.ttftMs)}ms / 总耗时 ${fmt(row.latencyMs)}ms">${escapeHtml(fmtDuration(row.ttftMs))} / ${escapeHtml(fmtDuration(row.latencyMs))}</td>
-          <td class="mono">${escapeHtml(text(row.provider))}</td>
           <td class="mono">${escapeHtml(text(row.reasoningEffort))}</td>
           <td>${row.failed ? '<span style="color:var(--danger)">failed</span>' : '<span style="color:var(--success)">ok</span>'}</td>
         </tr>
@@ -766,7 +760,6 @@
       state.accounts = state.pluginAccounts.map(row => row.name);
       state.models = Array.from(new Set(state.pluginModels.filter(Boolean))).sort();
 
-      optionList(els.accountFilter, '全部账号', state.accounts);
       optionList(els.modelFilter, '全部模型', state.models);
       renderSummary(state.pluginAccounts);
       renderDetails();
@@ -851,7 +844,8 @@
       state.records = [];
       refresh();
     });
-    els.accountFilter.addEventListener('change', renderDetails);
+    els.accountPanel.hidden = true;
+    els.modelFilter.addEventListener('change', renderDetails);
     els.modelFilter.addEventListener('change', renderDetails);
     els.searchFilter.addEventListener('input', renderDetails);
     renderAll();
