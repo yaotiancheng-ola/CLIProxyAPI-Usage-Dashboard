@@ -396,7 +396,7 @@
         </div>
       </div>
 
-      <div class="panel span-full" id="accountPanel" hidden>
+      <div class="panel span-full" id="accountPanel">
         <div class="panel-header">
           <h2>按认证账号统计 · 服务端</h2>
           <span id="accountHint" class="hint">0 rows</span>
@@ -410,6 +410,10 @@
                 <th>输入</th>
                 <th>输出</th>
                 <th>缓存命中</th>
+                <th>总 Token</th>
+                <th>费用 (USD)</th>
+                <th>当前用量占比</th>
+                <th>重置倒计时</th>
               </tr>
             </thead>
             <tbody id="accountRows"></tbody>
@@ -609,6 +613,20 @@
       return `${(n / 1000).toFixed(1)}s`;
     }
 
+    function countdownTo(unixSeconds) {
+      const ms = Number(unixSeconds) * 1000;
+      if (!ms || Number.isNaN(ms)) return '-';
+      const diff = ms - Date.now();
+      if (diff <= 0) return '已重置';
+      const totalHours = Math.floor(diff / 3600000);
+      const days = Math.floor(totalHours / 24);
+      const hours = totalHours % 24;
+      const minutes = Math.floor((diff % 3600000) / 60000);
+      if (days > 0) return `${days}天 ${hours}小时`;
+      if (hours > 0) return `${hours}小时 ${minutes}分`;
+      return `${minutes}分`;
+    }
+
     function text(value) {
       return value === null || value === undefined || value === '' ? '-' : String(value);
     }
@@ -751,7 +769,7 @@
     function renderSummary(rows) {
       els.accountHint.textContent = `${rows.length} rows`;
       if (!rows.length) {
-        els.accountRows.innerHTML = '<tr><td class="empty" colspan="5">暂无统计数据，刷新后从插件读取。</td></tr>';
+        els.accountRows.innerHTML = '<tr><td class="empty" colspan="9">暂无统计数据，刷新后从插件读取。</td></tr>';
         return;
       }
       els.accountRows.innerHTML = rows.map(row => `
@@ -761,6 +779,10 @@
           <td title="${fmt(row.input)}">${fmtTokens(row.input)}</td>
           <td title="${fmt(row.output)}">${fmtTokens(row.output)}</td>
           <td>${pct(row.cached, row.input)}</td>
+          <td title="${fmt(row.total)}">${fmtTokens(row.total)}</td>
+          <td>${row.costAvailable ? `$${Number(row.costUsd || 0).toFixed(2)}` : '-'}</td>
+          <td>${row.usedPercent === null ? '-' : `${Number(row.usedPercent).toFixed(1)}%`}</td>
+          <td class="mono" title="${row.resetAt ? formatTime(row.resetAt * 1000) : ''}">${escapeHtml(countdownTo(row.resetAt))}</td>
         </tr>
       `).join('');
     }
@@ -878,7 +900,12 @@
           requests: row.requests || 0,
           input: row.input_tokens || 0,
           output: row.output_tokens || 0,
-          cached: row.cached_tokens || 0
+          cached: row.cached_tokens || 0,
+          total: row.total_tokens || 0,
+          costUsd: row.cost_usd || 0,
+          costAvailable: Boolean(row.cost_available),
+          usedPercent: typeof row.primary_used_percent === 'number' ? row.primary_used_percent : null,
+          resetAt: Number(row.primary_reset_at) || null
         })).sort((a, b) => (b.input + b.output) - (a.input + a.output));
         state.pluginModels = (Array.isArray(payload.models) ? payload.models : []).map(row => row.model);
 
@@ -975,7 +1002,6 @@
       state.records = [];
       refresh();
     });
-    els.accountPanel.hidden = true;
     els.modelFilter.addEventListener('change', renderDetails);
     els.searchFilter.addEventListener('input', renderDetails);
     renderAll();
