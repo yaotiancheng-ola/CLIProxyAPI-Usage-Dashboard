@@ -94,7 +94,7 @@
       padding: 16px;
       display: grid;
       gap: 12px;
-      grid-template-columns: minmax(260px, 1.4fr) minmax(260px, 1fr) minmax(150px, 0.4fr) auto auto;
+      grid-template-columns: minmax(260px, 1.4fr) minmax(260px, 1fr) minmax(150px, 0.4fr) minmax(130px, 0.3fr) auto auto;
       align-items: end;
     }
 
@@ -338,6 +338,15 @@
           <option value="30d">最近 30 天</option>
         </select>
       </div>
+      <div>
+        <label for="autoRefresh">自动刷新</label>
+        <select id="autoRefresh">
+          <option value="0">关闭</option>
+          <option value="10">每 10 秒</option>
+          <option value="30">每 30 秒</option>
+          <option value="60">每 60 秒</option>
+        </select>
+      </div>
       <button id="refreshBtn" class="btn primary">刷新统计</button>
       <button id="clearBtn" class="btn">清空页面</button>
     </section>
@@ -472,6 +481,7 @@
       baseUrl: document.getElementById('baseUrl'),
       managementKey: document.getElementById('managementKey'),
       windowFilter: document.getElementById('windowFilter'),
+      autoRefresh: document.getElementById('autoRefresh'),
       refreshBtn: document.getElementById('refreshBtn'),
       clearBtn: document.getElementById('clearBtn'),
       status: document.getElementById('status'),
@@ -774,6 +784,7 @@
       }
       els.refreshBtn.disabled = true;
       const windowValue = els.windowFilter.value || 'all';
+      const autoSeconds = Number(els.autoRefresh.value) || 0;
       setStatus(`正在读取 /plugins/codex-token-usage/summary?window=${windowValue} ...`);
       try {
         localStorage.setItem('cliproxyapi-usage-base-url', normalizeBaseUrl(els.baseUrl.value));
@@ -811,9 +822,10 @@
         const added = state.records.length - before;
         renderAll();
 
+        const autoSuffix = autoSeconds ? `（自动刷新：每 ${autoSeconds} 秒）` : '';
         setStatus(
           `已读取服务端统计：${state.pluginKeys.length} 个 key、${state.pluginAccounts.length} 个账号、共 ${fmt(state.server.requests)} 次请求；` +
-          `本次新增明细 ${added} 条，页面保留 ${state.records.length} 条。读取不会删除服务端数据。`,
+          `本次新增明细 ${added} 条，页面保留 ${state.records.length} 条。读取不会删除服务端数据。${autoSuffix}`,
           'ok'
         );
       } catch (err) {
@@ -834,10 +846,30 @@
       setStatus('页面已清空。点击“刷新统计”可重新读取插件的服务端数据。');
     }
 
+    let autoTimer = null;
+
+    function applyAutoRefresh() {
+      if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+      }
+      const seconds = Number(els.autoRefresh.value) || 0;
+      localStorage.setItem('cliproxyapi-usage-auto', String(seconds));
+      if (!seconds) return;
+      autoTimer = setInterval(() => {
+        // 上一轮还没返回就跳过本轮，避免请求堆积。
+        if (!els.refreshBtn.disabled) refresh();
+      }, seconds * 1000);
+    }
+
     els.baseUrl.value = localStorage.getItem('cliproxyapi-usage-base-url') || defaultBaseUrl();
     els.windowFilter.value = localStorage.getItem('cliproxyapi-usage-window') || 'all';
+    els.autoRefresh.value = localStorage.getItem('cliproxyapi-usage-auto') || '0';
+    if (!['0', '10', '30', '60'].includes(els.autoRefresh.value)) els.autoRefresh.value = '0';
     els.refreshBtn.addEventListener('click', refresh);
     els.clearBtn.addEventListener('click', clearPage);
+    els.autoRefresh.addEventListener('change', applyAutoRefresh);
+    applyAutoRefresh();
     els.windowFilter.addEventListener('change', () => {
       localStorage.setItem('cliproxyapi-usage-window', els.windowFilter.value);
       // 明细按时间窗口累积，切换窗口后旧明细不再适用，清空并重新读取。
