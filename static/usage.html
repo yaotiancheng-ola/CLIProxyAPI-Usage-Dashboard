@@ -260,6 +260,10 @@
       font-size: 12px;
     }
 
+    .muted-num {
+      color: var(--muted);
+    }
+
     .account {
       max-width: 300px;
       overflow: hidden;
@@ -808,7 +812,7 @@
         <tr>
           <td class="mono">${escapeHtml(formatTime(row.timestamp))}</td>
           <td><span class="pill" title="${escapeHtml(row.model)}">${escapeHtml(row.model)}</span></td>
-          <td class="mono" title="实际输入（扣缓存） ${fmt(row.input - row.cached)} / 输出 ${fmt(row.output)} / 缓存命中 ${fmt(row.cached)}（原始输入 ${fmt(row.input)}）">${fmt(Math.max(0, row.input - row.cached))} / ${fmt(row.output)} / ${fmt(row.cached)}</td>
+          <td class="mono" title="实际输入（扣缓存） ${fmt(row.input - row.cached)} / 输出 ${fmt(row.output)} / 缓存命中 ${fmt(row.cached)}（原始输入 ${fmt(row.input)}）">${fmt(Math.max(0, row.input - row.cached))} / ${fmt(row.output)} / <span class="muted-num">${fmt(row.cached)}</span></td>
           <td>${pct(row.cached, row.input)}</td>
           <td class="mono" title="首 token ${fmt(row.ttftMs)}ms / 总耗时 ${fmt(row.latencyMs)}ms">${escapeHtml(fmtDuration(row.ttftMs))} / ${escapeHtml(fmtDuration(row.latencyMs))}</td>
           <td class="mono">${escapeHtml(text(row.reasoningEffort))}</td>
