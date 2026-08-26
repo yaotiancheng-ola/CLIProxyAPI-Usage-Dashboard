@@ -15,7 +15,8 @@ The page is a single static HTML app. It reads the plugin's server-side SQLite-p
 - Per-account and per-model server-side aggregates
 - Recent request list (with reasoning effort), filterable by account/model and searchable
 - Key aliases can be configured in the `KEY_ALIASES` table at the top of the script (matched by the last 4 chars of each key); panels display "alias (masked key)" with the note in the hover tooltip
-- Reading never deletes server-side data; details accumulate within the browser tab
+- Reading never deletes server-side data; details are persisted to browser IndexedDB (up to 10,000 records) and restored automatically on page load
+- The Management key is stored in localStorage (XOR + Base64 obfuscation) and auto-filled on the next visit
 - Runs as a static page without a backend service
 
 ## Requirements
@@ -42,9 +43,9 @@ You can also open the app directly through `static/usage.html`.
 
 ## Important Notes
 
-- The Management key is not included in this repository. Enter your own key in the browser when using the page.
+- The Management key is not included in this repository. Enter your own key in the browser when using the page; it is saved in this browser's localStorage in obfuscated form and auto-filled next time.
 - Summaries are read from the plugin's server-side database; reading never deletes data, so you can refresh at any time.
-- The recent-requests endpoint only returns the latest records each time; the page accumulates them within the current tab. Closing the tab loses the details, but summaries are unaffected.
+- The recent-requests endpoint only returns the latest records each time; the page accumulates and persists them to IndexedDB (up to 10,000). "Clear page" also deletes the local detail database.
 - The `KEY_ALIASES` table is published with the repository — do not put sensitive mappings in it.
 - If your browser blocks `file://` requests, serve this folder with any static web server and open the local URL instead.
 

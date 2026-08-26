@@ -501,6 +501,77 @@
       pluginKeyRows: document.getElementById('pluginKeyRows')
     };
 
+    const KEY_STORE_NAME = 'cliproxyapi-usage-mgmt-key';
+    const DB_NAME = 'cliproxy-usage';
+    const DB_STORE = 'records';
+    const MAX_STORED_RECORDS = 10000;
+    const OBFUSCATION_MASK = 'cliproxy-usage-dashboard';
+
+    // 简单混淆（XOR + base64）：防止明文直读/截图泄露，不是真正的加密。
+    function encodeSecret(value) {
+      const text = String(value || '');
+      if (!text) return '';
+      const bytes = Array.from(new TextEncoder().encode(text))
+        .map((byte, i) => byte ^ OBFUSCATION_MASK.charCodeAt(i % OBFUSCATION_MASK.length));
+      return btoa(String.fromCharCode(...bytes));
+    }
+
+    function decodeSecret(value) {
+      const text = String(value || '');
+      if (!text) return '';
+      try {
+        const bytes = Array.from(atob(text))
+          .map((char, i) => char.charCodeAt(0) ^ OBFUSCATION_MASK.charCodeAt(i % OBFUSCATION_MASK.length));
+        return new TextDecoder().decode(new Uint8Array(bytes));
+      } catch {
+        return '';
+      }
+    }
+
+    function openDb() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains(DB_STORE)) {
+            req.result.createObjectStore(DB_STORE, { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function dbAll() {
+      const db = await openDb();
+      return new Promise((resolve, reject) => {
+        const req = db.transaction(DB_STORE, 'readonly').objectStore(DB_STORE).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function dbPutMany(items) {
+      if (!items.length) return;
+      const db = await openDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(DB_STORE, 'readwrite');
+        const store = tx.objectStore(DB_STORE);
+        items.forEach(item => store.put(item));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function dbClear() {
+      const db = await openDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(DB_STORE, 'readwrite');
+        tx.objectStore(DB_STORE).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
     function defaultBaseUrl() {
       return 'http://127.0.0.1:8317/v0/management';
     }
@@ -788,6 +859,11 @@
       setStatus(`正在读取 /plugins/codex-token-usage/summary?window=${windowValue} ...`);
       try {
         localStorage.setItem('cliproxyapi-usage-base-url', normalizeBaseUrl(els.baseUrl.value));
+        if (els.managementKey.value.trim()) {
+          localStorage.setItem(KEY_STORE_NAME, encodeSecret(els.managementKey.value.trim()));
+        } else {
+          localStorage.removeItem(KEY_STORE_NAME);
+        }
         const payload = await apiGet(`/plugins/codex-token-usage/summary?window=${encodeURIComponent(windowValue)}&limit=2000`);
         if (!payload || !Array.isArray(payload.key_summaries)) {
           throw new Error('返回的数据不是 codex-token-usage 插件的 summary（缺少 key_summaries），请确认服务端已安装并启用该插件');
@@ -817,9 +893,16 @@
 
         const recent = Array.isArray(payload.recent) ? payload.recent : [];
         const before = state.records.length;
-        state.records = dedupeRecords(state.records.concat(recent.map(row => normalizeRecord(row))))
+        const newRecords = recent.map(row => normalizeRecord(row));
+        state.records = dedupeRecords(state.records.concat(newRecords))
           .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
         const added = state.records.length - before;
+        // 明细落库 IndexedDB：记录 id 用去重键，覆盖写入天然幂等。
+        const stored = state.records.slice(0, MAX_STORED_RECORDS).map(record => ({
+          ...record, raw: undefined,
+          id: [record.timestamp, record.account, record.model, record.input, record.output, record.cached].join('|')
+        }));
+        dbPutMany(stored).catch(err => console.warn('明细写入 IndexedDB 失败:', err));
         renderAll();
 
         const autoSuffix = autoSeconds ? `（自动刷新：每 ${autoSeconds} 秒）` : '';
@@ -842,8 +925,23 @@
       state.pluginAccounts = [];
       state.pluginModels = [];
       state.server = null;
+      dbClear().catch(err => console.warn('清空 IndexedDB 失败:', err));
       renderAll();
-      setStatus('页面已清空。点击“刷新统计”可重新读取插件的服务端数据。');
+      setStatus('页面已清空（含本地明细数据库）。点击“刷新统计”可重新读取插件的服务端数据。');
+    }
+
+    async function restoreFromDb() {
+      if (!('indexedDB' in window)) return;
+      try {
+        const stored = await dbAll();
+        if (!stored.length) return;
+        state.records = dedupeRecords(stored.map(record => ({ ...record })))
+          .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+        renderAll();
+        setStatus(`已从本地数据库恢复 ${state.records.length} 条明细。刷新后可获取最新数据。`);
+      } catch (err) {
+        console.warn('从 IndexedDB 恢复失败:', err);
+      }
     }
 
     let autoTimer = null;
@@ -863,6 +961,7 @@
     }
 
     els.baseUrl.value = localStorage.getItem('cliproxyapi-usage-base-url') || defaultBaseUrl();
+    els.managementKey.value = decodeSecret(localStorage.getItem(KEY_STORE_NAME));
     els.windowFilter.value = localStorage.getItem('cliproxyapi-usage-window') || 'all';
     els.autoRefresh.value = localStorage.getItem('cliproxyapi-usage-auto') || '0';
     if (!['0', '10', '30', '60'].includes(els.autoRefresh.value)) els.autoRefresh.value = '0';
@@ -878,9 +977,9 @@
     });
     els.accountPanel.hidden = true;
     els.modelFilter.addEventListener('change', renderDetails);
-    els.modelFilter.addEventListener('change', renderDetails);
     els.searchFilter.addEventListener('input', renderDetails);
     renderAll();
+    restoreFromDb();
   </script>
 </body>
 </html>
