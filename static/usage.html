@@ -442,8 +442,7 @@
               <tr>
                 <th>时间</th>
                 <th>模型</th>
-                <th>Tokens (入/出)</th>
-                <th>缓存</th>
+                <th>Tokens (入/出/缓存)</th>
                 <th>命中率</th>
                 <th>耗时 (首/总)</th>
                 <th>思考等级</th>
@@ -802,15 +801,14 @@
       const rows = filteredRecords();
       els.detailHint.textContent = `${rows.length} rows`;
       if (!rows.length) {
-        els.detailRows.innerHTML = '<tr><td class="empty" colspan="8">暂无明细，确认服务端已安装 codex-token-usage 插件并已产生请求。</td></tr>';
+        els.detailRows.innerHTML = '<tr><td class="empty" colspan="7">暂无明细，确认服务端已安装 codex-token-usage 插件并已产生请求。</td></tr>';
         return;
       }
       els.detailRows.innerHTML = rows.slice(0, 1000).map(row => `
         <tr>
           <td class="mono">${escapeHtml(formatTime(row.timestamp))}</td>
           <td><span class="pill" title="${escapeHtml(row.model)}">${escapeHtml(row.model)}</span></td>
-          <td class="mono" title="输入 ${fmt(row.input)} / 输出 ${fmt(row.output)}">${fmt(row.input)} / ${fmt(row.output)}</td>
-          <td>${fmt(row.cached)}</td>
+          <td class="mono" title="实际输入（扣缓存） ${fmt(row.input - row.cached)} / 输出 ${fmt(row.output)} / 缓存命中 ${fmt(row.cached)}（原始输入 ${fmt(row.input)}）">${fmt(Math.max(0, row.input - row.cached))} / ${fmt(row.output)} / ${fmt(row.cached)}</td>
           <td>${pct(row.cached, row.input)}</td>
           <td class="mono" title="首 token ${fmt(row.ttftMs)}ms / 总耗时 ${fmt(row.latencyMs)}ms">${escapeHtml(fmtDuration(row.ttftMs))} / ${escapeHtml(fmtDuration(row.latencyMs))}</td>
           <td class="mono">${escapeHtml(text(row.reasoningEffort))}</td>
