@@ -168,36 +168,22 @@
       background: var(--canvas);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 20px;
+      padding: 14px;
       box-shadow: var(--shadow);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
     }
 
     .stat .label {
       color: var(--muted);
       font-size: 12px;
       font-weight: 600;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
     }
 
     .stat .value {
-      font-size: 26px;
+      margin-top: 6px;
+      font-size: 24px;
       line-height: 1.2;
-      font-weight: 700;
+      font-weight: 600;
       letter-spacing: 0;
-    }
-
-    .stat .caption {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.5;
-      border-top: 1px solid var(--border-muted);
-      padding-top: 8px;
-      margin-top: auto;
     }
 
     .grid {
@@ -385,24 +371,20 @@
 
     <section class="stats" aria-label="总览">
       <div class="stat">
-        <div class="label"><span>认证账号</span><span id="statAccountsTag"></span></div>
+        <div class="label">认证账号</div>
         <div id="statAccounts" class="value">0</div>
-        <div class="caption" id="statAccountsCaption">刷新后从插件读取服务端账号数据。</div>
       </div>
       <div class="stat">
-        <div class="label"><span>读取 Token</span></div>
+        <div class="label">读取 Token</div>
         <div id="statInput" class="value">0</div>
-        <div class="caption">实际输入 token，已扣除缓存命中部分。</div>
       </div>
       <div class="stat">
-        <div class="label"><span>写入 Token</span></div>
+        <div class="label">写入 Token</div>
         <div id="statOutput" class="value">0</div>
-        <div class="caption">输出 token，含推理生成部分。</div>
       </div>
       <div class="stat">
-        <div class="label"><span>缓存命中率</span></div>
+        <div class="label">缓存命中率</div>
         <div id="statCache" class="value">0%</div>
-        <div class="caption" id="statCacheCaption">缓存命中 token ÷ 原始输入 token。</div>
       </div>
     </section>
 
@@ -526,8 +508,6 @@
       clearBtn: document.getElementById('clearBtn'),
       status: document.getElementById('status'),
       statAccounts: document.getElementById('statAccounts'),
-      statAccountsTag: document.getElementById('statAccountsTag'),
-      statAccountsCaption: document.getElementById('statAccountsCaption'),
       statInput: document.getElementById('statInput'),
       statOutput: document.getElementById('statOutput'),
       statCache: document.getElementById('statCache'),
@@ -631,6 +611,7 @@
       const n = Number(value || 0);
       if (n >= 1e9) return `${compact(n / 1e9)}B`;
       if (n >= 1e6) return `${compact(n / 1e6)}M`;
+      if (n >= 1e4) return `${compact(n / 1e3)}K`;
       return fmt(n);
     }
 
@@ -891,15 +872,11 @@
     function renderAll() {
       const server = state.server || { accounts: 0, input: 0, output: 0, cached: 0 };
       els.statAccounts.textContent = fmt(server.accounts);
-      els.statAccountsTag.textContent = server.requests ? `共 ${fmt(server.requests)} 次` : '';
       els.statInput.textContent = fmtTokens(server.input);
       els.statOutput.textContent = fmtTokens(server.output);
       els.statInput.title = fmt(server.input);
       els.statOutput.title = fmt(server.output);
       els.statCache.textContent = pct(server.cached, server.input);
-      els.statAccountsCaption.textContent = state.pluginAccounts.length
-        ? `已启用账号 ${state.pluginAccounts.length} 个，数据来自服务端。`
-        : '刷新后从插件读取服务端账号数据。';
 
       state.accounts = state.pluginAccounts.map(row => row.name);
       state.models = Array.from(new Set(state.pluginModels.filter(Boolean))).sort();
