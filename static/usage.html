@@ -912,7 +912,7 @@
         state.raw = payload;
         state.pluginKeys = payload.key_summaries
           .slice()
-          .sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
+          .sort((a, b) => (b.cost_usd || 0) - (a.cost_usd || 0));
         state.pluginAccounts = (Array.isArray(payload.accounts) ? payload.accounts : []).map(row => ({
           name: row.email || row.source || row.auth_file || 'unknown',
           requests: row.requests || 0,
