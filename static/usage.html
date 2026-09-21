@@ -463,6 +463,7 @@
 写入：输出 token
 缓存：缓存命中的输入 token（原始输入 = 读取 + 缓存）">Token</th>
                 <th>命中率</th>
+                <th>费用</th>
                 <th>耗时 (首/总)</th>
                 <th>思考等级</th>
                 <th>状态</th>
@@ -722,6 +723,7 @@
         model: record.model ?? record.Model ?? record.alias ?? 'unknown',
         provider: record.provider ?? record.Provider ?? record.source_type ?? '',
         reasoningEffort: record.reasoning_effort ?? record.reasoningEffort ?? record.ReasoningEffort ?? '',
+        costUsd: typeof record.cost_usd === 'number' ? record.cost_usd : null,
         ttftMs: Number(record.ttft_ms ?? record.ttftMs ?? 0) || 0,
         latencyMs: Number(record.latency_ms ?? record.latencyMs ?? 0) || 0,
         failed: Boolean(record.failed ?? record.Failed ?? false),
@@ -821,7 +823,7 @@
       const rows = filteredRecords();
       els.detailHint.textContent = `${rows.length} rows`;
       if (!rows.length) {
-        els.detailRows.innerHTML = '<tr><td class="empty" colspan="7">暂无明细，确认服务端已安装 codex-token-usage 插件并已产生请求。</td></tr>';
+        els.detailRows.innerHTML = '<tr><td class="empty" colspan="8">暂无明细，确认服务端已安装 codex-token-usage 插件并已产生请求。</td></tr>';
         return;
       }
       els.detailRows.innerHTML = rows.slice(0, 1000).map(row => `
@@ -830,6 +832,7 @@
           <td><span class="pill" title="${escapeHtml(row.model)}">${escapeHtml(row.model)}</span></td>
           <td class="mono" title="实际输入（扣缓存） ${fmt(row.input - row.cached)} / 输出 ${fmt(row.output)} / 缓存命中 ${fmt(row.cached)}（原始输入 ${fmt(row.input)}）"><span class="tokens-cell"><span>${fmt(Math.max(0, row.input - row.cached))} / ${fmt(row.output)}</span><span class="tokens-cache" title="${fmt(row.cached)}">${fmtTokens(row.cached)}</span></span></td>
           <td>${pct(row.cached, row.input)}</td>
+          <td>${row.costUsd === null ? '-' : `$${row.costUsd.toFixed(4)}`}</td>
           <td class="mono" title="首 token ${fmt(row.ttftMs)}ms / 总耗时 ${fmt(row.latencyMs)}ms">${escapeHtml(fmtDuration(row.ttftMs))} / ${escapeHtml(fmtDuration(row.latencyMs))}</td>
           <td class="mono">${escapeHtml(text(row.reasoningEffort))}</td>
           <td>${row.failed ? '<span style="color:var(--danger)">failed</span>' : '<span style="color:var(--success)">ok</span>'}</td>
