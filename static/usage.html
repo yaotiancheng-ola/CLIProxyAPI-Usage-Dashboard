@@ -865,7 +865,7 @@
           <td title="${fmt(row.input_tokens)}">${fmtTokens(row.input_tokens)}</td>
           <td title="${fmt(row.output_tokens)}">${fmtTokens(row.output_tokens)}</td>
           <td>${pct(row.cached_tokens, row.input_tokens)}</td>
-          <td>${row.cost_available ? `$${Number(row.cost_usd || 0).toFixed(2)}` : '-'}</td>
+          <td title="${row.cost_available ? '' : '服务端标记成本不完整，显示为部分估算值'}">${typeof row.cost_usd === 'number' ? `$${row.cost_usd.toFixed(2)}` : '-'}</td>
           <td>${(Number(row.avg_latency_ms || 0) / 1000).toFixed(1)}s</td>
           <td class="mono">${escapeHtml(formatTime(row.last_seen))}</td>
         </tr>`;
